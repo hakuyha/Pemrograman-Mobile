@@ -1,4 +1,7 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -23,7 +26,25 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// Konfigurasi Base URL API Backend
+class AppConfig {
+  /// Base URL endpoint API.
+  /// - Android Emulator: 'http://10.0.2.2:3000'
+  /// - Web / Windows Desktop: 'http://localhost:3000'
+  /// - Real Device (HP Fisik): Ubah sesuai IP LAN Laptop (misal 'http://192.168.1.10:3000')
+  static String get baseUrl {
+    if (kIsWeb) {
+      return 'http://localhost:3000';
+    }
+    return defaultTargetPlatform == TargetPlatform.android
+        ? 'http://10.0.2.2:3000'
+        : 'http://localhost:3000';
+  }
+}
+
+// Model PenyediaJasa yang dipetakan dari database MySQL
 class PenyediaJasa {
+  final int id;
   final String nama;
   final String profesi;
   final String harga;
@@ -32,6 +53,7 @@ class PenyediaJasa {
   final IconData icon;
 
   const PenyediaJasa({
+    required this.id,
     required this.nama,
     required this.profesi,
     required this.harga,
@@ -39,40 +61,116 @@ class PenyediaJasa {
     required this.keahlian,
     required this.icon,
   });
+
+  factory PenyediaJasa.fromJson(Map<String, dynamic> json) {
+    List<String> listKeahlian = [];
+    if (json['keahlian'] is List) {
+      listKeahlian = (json['keahlian'] as List)
+          .map((item) => item.toString())
+          .toList();
+    } else if (json['keahlian'] is String) {
+      try {
+        final parsed = jsonDecode(json['keahlian'] as String);
+        if (parsed is List) {
+          listKeahlian = parsed.map((item) => item.toString()).toList();
+        } else {
+          listKeahlian = [json['keahlian'].toString()];
+        }
+      } catch (_) {
+        listKeahlian = (json['keahlian'] as String)
+            .split(',')
+            .map((s) => s.trim())
+            .toList();
+      }
+    }
+
+    return PenyediaJasa(
+      id: json['id'] is int ? json['id'] : int.tryParse(json['id'].toString()) ?? 0,
+      nama: json['nama'] ?? '',
+      profesi: json['profesi'] ?? '',
+      harga: json['harga'] ?? '',
+      bio: json['bio'] ?? '',
+      keahlian: listKeahlian,
+      icon: _parseIcon(json['icon']?.toString()),
+    );
+  }
+
+  static IconData _parseIcon(String? iconName) {
+    switch (iconName?.toLowerCase().trim()) {
+      case 'developer_mode':
+        return Icons.developer_mode;
+      case 'design_services':
+        return Icons.design_services;
+      case 'storage':
+        return Icons.storage;
+      case 'code':
+        return Icons.code;
+      case 'security':
+        return Icons.security;
+      case 'web':
+        return Icons.web;
+      case 'phone_android':
+        return Icons.phone_android;
+      case 'analytics':
+        return Icons.analytics;
+      case 'cloud':
+        return Icons.cloud;
+      default:
+        return Icons.work_outline;
+    }
+  }
 }
 
-class BerandaPage extends StatelessWidget {
+// Service untuk mengambil data dari backend REST API
+class ApiService {
+  static Future<List<PenyediaJasa>> getPenyediaJasa() async {
+    final uri = Uri.parse('${AppConfig.baseUrl}/api/penyedia-jasa');
+
+    try {
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> jsonBody = jsonDecode(response.body);
+        if (jsonBody['status'] == true && jsonBody['data'] is List) {
+          final List rawList = jsonBody['data'];
+          return rawList.map((item) => PenyediaJasa.fromJson(item)).toList();
+        } else {
+          throw Exception('Format respons API tidak valid.');
+        }
+      } else {
+        throw Exception(
+          'Gagal memuat data dari server (HTTP ${response.statusCode})',
+        );
+      }
+    } catch (e) {
+      throw Exception('Tidak dapat terhubung ke server backend ($e)');
+    }
+  }
+}
+
+class BerandaPage extends StatefulWidget {
   const BerandaPage({super.key});
 
-  final List<PenyediaJasa> daftarJasa = const [
-    PenyediaJasa(
-      nama: 'Harun Yahya',
-      profesi: 'Mobile App Developer (Flutter)',
-      harga: 'Rp 3.500.000 / proyek',
-      bio:
-          'Spesialis pembuatan aplikasi mobile Android & iOS menggunakan Flutter. Berpengalaman dalam integrasi REST API, database lokal, dan publikasi aplikasi.',
-      keahlian: ['Flutter & Dart', 'Integrasi API', 'Firebase Setup'],
-      icon: Icons.developer_mode,
-    ),
-    PenyediaJasa(
-      nama: 'Yahya Yahya',
-      profesi: 'UI/UX Designer',
-      harga: 'Rp 1.500.000 / proyek',
-      bio:
-          'Menyediakan jasa desain antarmuka aplikasi dan website modern. Berfokus pada kemudahan interaksi pengguna (UX) dan desain visual yang elegan (UI).',
-      keahlian: ['Figma Design', 'Wireframing & Prototyping', 'Design System'],
-      icon: Icons.design_services,
-    ),
-    PenyediaJasa(
-      nama: 'Harun Harun',
-      profesi: 'Backend & Cloud Engineer',
-      harga: 'Rp 4.000.000 / proyek',
-      bio:
-          'Melayani pengembangan RESTful API berkinerja tinggi, manajemen database PostgreSQL/MySQL, serta konfigurasi server cloud & deployment.',
-      keahlian: ['REST API Architecture', 'Database Optimization', 'Cloud Server Setup'],
-      icon: Icons.storage,
-    ),
-  ];
+  @override
+  State<BerandaPage> createState() => _BerandaPageState();
+}
+
+class _BerandaPageState extends State<BerandaPage> {
+  late Future<List<PenyediaJasa>> _futureJasa;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  void _loadData() {
+    setState(() {
+      _futureJasa = ApiService.getPenyediaJasa();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,73 +182,162 @@ class BerandaPage extends StatelessWidget {
         ),
         centerTitle: true,
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Segarkan Data',
+            onPressed: _loadData,
+          ),
+        ],
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        itemCount: daftarJasa.length,
-        itemBuilder: (context, index) {
-          final jasa = daftarJasa[index];
-          return Card(
-            elevation: 2,
-            margin: const EdgeInsets.symmetric(vertical: 8),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              leading: CircleAvatar(
-                radius: 26,
-                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                child: Icon(
-                  jasa.icon,
-                  size: 28,
-                  color: Theme.of(context).colorScheme.primary,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          _loadData();
+          await _futureJasa;
+        },
+        child: FutureBuilder<List<PenyediaJasa>>(
+          future: _futureJasa,
+          builder: (context, snapshot) {
+            // Loading State
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Memuat data dari MySQL...'),
+                  ],
                 ),
-              ),
-              title: Text(
-                jasa.nama,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
+              );
+            }
+
+            // Error State
+            if (snapshot.hasError) {
+              return Center(
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.cloud_off,
+                        size: 64,
+                        color: Colors.redAccent,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Koneksi Backend Gagal',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${snapshot.error}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton.icon(
+                        onPressed: _loadData,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Coba Lagi'),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 4),
-                  Text(
-                    jasa.profesi,
-                    style: TextStyle(
-                      color: Colors.grey.shade700,
-                      fontWeight: FontWeight.w500,
-                    ),
+              );
+            }
+
+            // Empty State
+            final listJasa = snapshot.data ?? [];
+            if (listJasa.isEmpty) {
+              return const Center(
+                child: Text(
+                  'Belum ada data penyedia jasa di database.',
+                  style: TextStyle(fontSize: 15, color: Colors.grey),
+                ),
+              );
+            }
+
+            // Success State (Data dari MySQL)
+            return ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              itemCount: listJasa.length,
+              itemBuilder: (context, index) {
+                final jasa = listJasa[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.symmetric(vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    jasa.harga,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.primary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
                     ),
-                  ),
-                ],
-              ),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => DetailProfilPage(jasa: jasa),
+                    leading: CircleAvatar(
+                      radius: 26,
+                      backgroundColor:
+                          Theme.of(context).colorScheme.primaryContainer,
+                      child: Icon(
+                        jasa.icon,
+                        size: 28,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    title: Text(
+                      jasa.nama,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 4),
+                        Text(
+                          jasa.profesi,
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          jasa.harga,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => DetailProfilPage(jasa: jasa),
+                        ),
+                      );
+                    },
                   ),
                 );
               },
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -232,7 +419,11 @@ class _DetailProfilPageState extends State<DetailProfilPage> {
                   children: [
                     const Row(
                       children: [
-                        Icon(Icons.info_outline, size: 20, color: Color(0xFF1E88E5)),
+                        Icon(
+                          Icons.info_outline,
+                          size: 20,
+                          color: Color(0xFF1E88E5),
+                        ),
                         SizedBox(width: 8),
                         Text(
                           'Bio & Penawaran Layanan',
