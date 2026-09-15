@@ -1,5 +1,8 @@
 # Miscellaneous
 *.docx
+.agents/
+.agent/
+AGENTS.md
 *.class
 *.lock
 *.log

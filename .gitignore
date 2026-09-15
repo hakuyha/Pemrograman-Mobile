@@ -1,3 +1,8 @@
 *.docx
 **/node_modules/
 **/.env
+.agents/
+.agent/
+**/.agents/
+**/.agent/
+**/AGENTS.md
